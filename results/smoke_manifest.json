@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-10-25 18:31:49 UTC",
-  "git_commit": "33361f0a2ef862e07e37578c08bbdbad301e2e7c",
+  "timestamp": "2026-10-25 22:27:53 UTC",
+  "git_commit": "15aee51e16244b94ee97e0572b6e1e72952b9856",
   "device": "mps",
   "device_name": "mps",
   "parameters": 61123,
-  "train_steps": 100,
-  "train_duration_sec": 23.453155040740967,
+  "train_steps": 200,
+  "train_duration_sec": 43.09222888946533,
   "metrics": {
-    "wmape": 0.02107282541692257,
-    "mae": 10.005645751953125,
-    "rmse": 20.93547821044922,
-    "curtailment_f1": 0.768,
-    "curtailment_precision": 0.9770992366412213,
+    "wmape": 0.020470883697271347,
+    "mae": 9.71983528137207,
+    "rmse": 20.733304977416992,
+    "curtailment_f1": 0.7544204322200392,
+    "curtailment_precision": 0.9343065693430657,
     "curtailment_recall": 0.6326194398682042,
-    "curtailment_accuracy": 0.9861904761904762
+    "curtailment_accuracy": 0.9851190476190477
   },
   "gate_passed": true,
   "config": {
