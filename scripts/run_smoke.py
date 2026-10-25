@@ -34,6 +34,10 @@ def main():
     parser.add_argument("--config", type=str, default="configs/smoke_test.yaml", help="Path to config file")
     parser.add_argument("--device", type=str, default=None, help="Device override (cuda, mps, cpu)")
     parser.add_argument("--steps", type=int, default=None, help="Override training steps")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases telemetry logging")
+    parser.add_argument("--wandb-project", type=str, default="moonshot-saros-grid-ssm", help="W&B project name")
+    parser.add_argument("--wandb-name", type=str, default=None, help="W&B run display name")
+    parser.add_argument("--wandb-mode", type=str, default=None, choices=["online", "offline", "disabled"], help="W&B run mode override")
     args = parser.parse_args()
 
     config_path = args.config if os.path.isabs(args.config) else os.path.join(REPO_ROOT, args.config)
@@ -61,6 +65,28 @@ def main():
     # Set reproducibility seed
     seed = cfg["training"].get("seed", 2026)
     torch.manual_seed(seed)
+
+    # Initialize W&B tracking if requested or WANDB_API_KEY is present
+    use_wandb = args.wandb or (os.environ.get("WANDB_API_KEY") is not None)
+    wandb_run = None
+    if use_wandb:
+        try:
+            import wandb
+            mode = args.wandb_mode or os.environ.get("WANDB_MODE", "online" if os.environ.get("WANDB_API_KEY") else "offline")
+            run_name = args.wandb_name or f"saros-grid-ssm-smoke-seed{seed}"
+            wandb_run = wandb.init(
+                project=args.wandb_project,
+                group="saros-grid-smoke",
+                job_type="smoke",
+                name=run_name,
+                config=cfg,
+                mode=mode,
+                dir=os.environ.get("WANDB_DIR", "/tmp/wandb"),
+            )
+            print(f"[W&B] Initialized run '{run_name}' in project '{args.wandb_project}' (mode: {mode})")
+        except Exception as e:
+            print(f"[W&B Warning] Failed to initialize wandb: {e}. Continuing without W&B.")
+            use_wandb = False
 
     # 2. Generate Synthetic REE Grid Data (14 days = 1344 timesteps @ 15 min)
     print("\n[1/4] Generating synthetic REE 50-node transmission dataset...")
@@ -147,6 +173,14 @@ def main():
                 print(f"Step [{step:03d}/{max_steps:03d}] | Total Loss: {total_loss.item():.4f} | "
                       f"Inj Loss: {loss_inj.item():.4f} | Curt Loss: {loss_curt.item():.4f} | "
                       f"Batch wMAPE: {wmape_batch * 100:.2f}%")
+                if use_wandb:
+                    wandb.log({
+                        "step": step,
+                        "train/total_loss": total_loss.item(),
+                        "train/loss_inj": loss_inj.item(),
+                        "train/loss_curt": loss_curt.item(),
+                        "train/batch_wmape": wmape_batch,
+                    })
 
             if step >= max_steps:
                 break
@@ -186,6 +220,16 @@ def main():
     print(f"  Curtailment Precision / Recall      : {metrics['curtailment_precision']:.4f} / {metrics['curtailment_recall']:.4f}")
     print(f"  Gate 1 Status                       : {'PASSED' if gate_passed else 'FAILED'}")
     print("=" * 70)
+
+    if use_wandb and wandb_run:
+        wandb.summary["wmape"] = metrics["wmape"]
+        wandb.summary["mae"] = metrics["mae"]
+        wandb.summary["rmse"] = metrics["rmse"]
+        wandb.summary["curtailment_f1"] = metrics["curtailment_f1"]
+        wandb.summary["curtailment_precision"] = metrics["curtailment_precision"]
+        wandb.summary["curtailment_recall"] = metrics["curtailment_recall"]
+        wandb.summary["gate1_passed"] = gate_passed
+        wandb.finish()
 
     # 6. Save Manifest
     results_dir = os.path.join(REPO_ROOT, "results")
