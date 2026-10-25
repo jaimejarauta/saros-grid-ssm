@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-10-25 16:49:32 UTC",
+  "git_commit": "6399308269210be44b830e70ef5d08247006cdd6",
+  "device": "mps",
+  "device_name": "mps",
+  "parameters": 61123,
+  "train_steps": 50,
+  "train_duration_sec": 33.011250257492065,
+  "metrics": {
+    "wmape": 0.034435149282217026,
+    "mae": 16.36603355407715,
+    "rmse": 29.71886444091797,
+    "curtailment_f1": 0.7661942844763712,
+    "curtailment_precision": 0.9908376962053878,
+    "curtailment_recall": 0.624587458694341,
+    "curtailment_accuracy": 0.98625
+  },
+  "gate_passed": true,
+  "config": {
+    "question": "Can spatio-temporal selective state space models predict 15-minute nodal renewable injection and curtailment with wMAPE < 6.5%?",
+    "date": "2026-10-25",
+    "grid": {
+      "num_nodes": 50,
+      "timesteps": 96,
+      "in_features": 4,
+      "out_features": 2,
+      "curtailment_out": 1
+    },
+    "model": {
+      "d_model": 64,
+      "d_state": 16,
+      "num_spatial_hops": 2,
+      "num_layers": 2,
+      "bidirectional": true,
+      "dropout": 0.05
+    },
+    "training": {
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "steps": 100,
+      "batch_size": 16,
+      "seed": 2026
+    },
+    "pre_registered_rules": {
+      "gate_metric": "wmape",
+      "gate_threshold": 0.065,
+      "curtailment_f1_threshold": 0.75,
+      "kill_rule": "wmape >= 0.085 or f1 < 0.50",
+      "pass_rule": "wmape < 0.065 and f1 >= 0.75",
+      "max_runtime_sec": 180
+    }
+  }
+}
