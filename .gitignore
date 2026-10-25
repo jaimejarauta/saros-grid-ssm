@@ -1,0 +1,25 @@
+# Environments
+.venv/
+env/
+venv/
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
+
+# Large assets, weights, datasets
+*.pt
+*.pth
+*.bin
+*.safetensors
+data/
+results/checkpoints/
+
+# W&B & tracking
+wandb/
+.wandb/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
