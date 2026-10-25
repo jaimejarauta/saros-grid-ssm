@@ -192,9 +192,12 @@ def generate_synthetic_ree_grid(
         weather_cloud = 0.85 + 0.15 * np.sin(2 * np.pi * (day_idx / 7.0) + weather_phase)
         weather_wind_gust = 0.90 + 0.25 * np.cos(2 * np.pi * (day_idx / 5.0) + weather_phase)
 
-        sol_pot = solar_cap * solar_diurnal[t] * weather_cloud
-        sol_pot += rng.normal(0.0, 5.0, size=(num_nodes,))
-        sol_pot = np.maximum(0.0, sol_pot)
+        if solar_diurnal[t] > 0.0:
+            sol_pot = solar_cap * solar_diurnal[t] * weather_cloud
+            sol_pot += rng.normal(0.0, 5.0, size=(num_nodes,)) * solar_diurnal[t]
+            sol_pot = np.maximum(0.0, sol_pot)
+        else:
+            sol_pot = np.zeros(num_nodes, dtype=np.float32)
 
         wnd_pot = wind_cap * wind_diurnal[t] * weather_wind_gust
         wnd_pot += rng.normal(0.0, 10.0, size=(num_nodes,))

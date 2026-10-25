@@ -29,25 +29,35 @@ def compute_curtailment_f1(
     eps: float = 1e-7
 ) -> Dict[str, float]:
     """Precision, recall, and F1 score for curtailment bottleneck event classification."""
-    if isinstance(y_true, torch.Tensor):
-        y_true_np = (y_true > 0.5).detach().cpu().numpy().astype(int).flatten()
+    if isinstance(y_true, torch.Tensor) and isinstance(y_pred_prob, torch.Tensor):
+        y_true_b = (y_true > 0.5)
+        y_pred_b = (y_pred_prob >= threshold)
+        tp = int((y_true_b & y_pred_b).sum().item())
+        fp = int((~y_true_b & y_pred_b).sum().item())
+        fn = int((y_true_b & ~y_pred_b).sum().item())
+        tn = int((~y_true_b & ~y_pred_b).sum().item())
+        total_len = y_true.numel()
     else:
-        y_true_np = (y_true > 0.5).astype(int).flatten()
+        if isinstance(y_true, torch.Tensor):
+            y_true_np = (y_true > 0.5).detach().cpu().numpy().astype(int).flatten()
+        else:
+            y_true_np = (y_true > 0.5).astype(int).flatten()
 
-    if isinstance(y_pred_prob, torch.Tensor):
-        y_pred_np = (y_pred_prob >= threshold).detach().cpu().numpy().astype(int).flatten()
-    else:
-        y_pred_np = (y_pred_prob >= threshold).astype(int).flatten()
+        if isinstance(y_pred_prob, torch.Tensor):
+            y_pred_np = (y_pred_prob >= threshold).detach().cpu().numpy().astype(int).flatten()
+        else:
+            y_pred_np = (y_pred_prob >= threshold).astype(int).flatten()
 
-    tp = np.sum((y_true_np == 1) & (y_pred_np == 1))
-    fp = np.sum((y_true_np == 0) & (y_pred_np == 1))
-    fn = np.sum((y_true_np == 1) & (y_pred_np == 0))
-    tn = np.sum((y_true_np == 0) & (y_pred_np == 0))
+        tp = int(np.sum((y_true_np == 1) & (y_pred_np == 1)))
+        fp = int(np.sum((y_true_np == 0) & (y_pred_np == 1)))
+        fn = int(np.sum((y_true_np == 1) & (y_pred_np == 0)))
+        tn = int(np.sum((y_true_np == 0) & (y_pred_np == 0)))
+        total_len = len(y_true_np)
 
-    precision = tp / (tp + fp + eps)
-    recall = tp / (tp + fn + eps)
-    f1 = 2 * (precision * recall) / (precision + recall + eps)
-    accuracy = (tp + tn) / max(1, len(y_true_np))
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    accuracy = (tp + tn) / max(1, total_len)
 
     return {
         "precision": float(precision),

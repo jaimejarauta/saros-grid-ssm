@@ -10,6 +10,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def parallel_selective_scan(a_bar: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+    """Parallel associative scan for diagonal state space recurrence: h_t = a_t * h_{t-1} + u_t.
+    
+    Evaluates linear recurrence in O(log2(T)) parallel steps via associative prefix doubling
+    rather than O(T) sequential Python iterations. Preserves exact autograd gradients.
+    """
+    b, t, d = a_bar.shape
+    num_steps = (t - 1).bit_length()
+    a = a_bar
+    v = u
+    for k in range(num_steps):
+        step = 1 << k
+        if step >= t:
+            break
+        v = torch.cat([v[:, :step], v[:, step:] + a[:, step:] * v[:, :-step]], dim=1)
+        a = torch.cat([a[:, :step], a[:, step:] * a[:, :-step]], dim=1)
+    return v
+
+
 class GraphSpatialDiffusion(nn.Module):
     """K-hop graph spatial diffusion operator reflecting physical transmission power flow."""
     def __init__(self, d_in: int, d_out: int, num_hops: int = 2):
@@ -46,9 +65,8 @@ class GraphSpatialDiffusion(nn.Module):
 
         # Successive Chebyshev / Adjacency polynomial diffusion hops
         for k in range(1, self.num_hops + 1):
-            # p_k = A_norm * p_{k-1} along the node dimension N
-            # (N, N) @ (B, T, N, D_in) -> (B, T, N, D_in)
-            p_next = torch.einsum("nm,btmd->btnd", adj_norm, p_curr)
+            # Batched spatial graph propagation: (N, N) @ (B, T, N, D) -> (B, T, N, D)
+            p_next = torch.matmul(adj_norm, p_curr)
             out = out + torch.matmul(p_next, self.hop_weights[k])
             p_curr = p_next
 
@@ -111,20 +129,17 @@ class SelectiveSSMBlock(nn.Module):
         proj_c: nn.Linear,
         reverse: bool = False
     ) -> torch.Tensor:
-        """Performs selective continuous-time SSM scan along sequence length dimension.
+        """Performs selective continuous-time SSM scan along sequence length dimension in parallel.
         
         Args:
             x: Tensor of shape (BatchSize, SeqLen, D_model)
         Returns:
             Output tensor of shape (BatchSize, SeqLen, D_model)
         """
-        b_size, seq_len, _ = x.shape
-        device = x.device
-
         # Continuous transition A_c = -exp(log_alpha) (1, d_state)
         a_cont = -torch.exp(log_alpha)
 
-        # Precompute input-dependent projections
+        # Precompute input-dependent projections in parallel across sequence length
         delta = F.softplus(proj_delta(x))   # (B, T, d_state)
         b_t = proj_b(x)                     # (B, T, d_state)
         c_t = proj_c(x)                     # (B, T, d_state)
@@ -132,27 +147,22 @@ class SelectiveSSMBlock(nn.Module):
         # Discretize: A_bar = exp(delta * A_c), B_bar = delta * B_t
         a_bar = torch.exp(delta * a_cont.unsqueeze(0))  # (B, T, d_state)
         b_bar = delta * b_t                            # (B, T, d_state)
-
-        h_state = torch.zeros(b_size, self.d_state, device=device, dtype=x.dtype)
-        y_steps = []
-
-        step_indices = range(seq_len - 1, -1, -1) if reverse else range(seq_len)
-        for t in step_indices:
-            # Scalar channel modulation: take mean across d_model for state input
-            x_step_input = x[:, t, :].mean(dim=-1, keepdim=True)
-            # h_t = A_bar * h_{t-1} + B_bar * x_t
-            h_state = a_bar[:, t, :] * h_state + b_bar[:, t, :] * x_step_input
-            # y_t = C_t * h_t
-            y_state = h_state * c_t[:, t, :]  # (B, d_state)
-            y_steps.append(y_state)
+        u = b_bar * x.mean(dim=-1, keepdim=True)       # (B, T, d_state)
 
         if reverse:
-            y_steps = y_steps[::-1]
+            a_bar = torch.flip(a_bar, dims=[1])
+            u = torch.flip(u, dims=[1])
+            c_t = torch.flip(c_t, dims=[1])
 
-        y_stacked = torch.stack(y_steps, dim=1)  # (B, T, d_state)
+        # Vectorized associative prefix scan O(log2 T)
+        h_state = parallel_selective_scan(a_bar, u)     # (B, T, d_state)
+        y_stacked = h_state * c_t                      # (B, T, d_state)
+
+        if reverse:
+            y_stacked = torch.flip(y_stacked, dims=[1])
+
         # Tile or project to d_model
         if self.d_state != self.d_model:
-            # Linear expansion to d_model
             rep_factor = math.ceil(self.d_model / self.d_state)
             y_out = y_stacked.repeat(1, 1, rep_factor)[:, :, :self.d_model]
         else:
