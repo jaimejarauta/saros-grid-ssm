@@ -18,7 +18,7 @@ python scripts/run_smoke.py --config configs/smoke_test.yaml --steps 50 --wandb
 ```
 
 ### Google Colab:
-Open `notebooks/colab_runner.ipynb` in Colab on a standard T4 GPU. Includes automatic machine teardown (`runtime.unassign()`) to protect compute credits upon completion.
+Open `notebooks/colab_runner_saros_grid_ssm.ipynb` in Colab on a standard T4 GPU. Includes automatic machine teardown (`runtime.unassign()`) to protect compute credits upon completion.
 
 ## Telemetry
 Native Weights & Biases support via `--wandb` (project: `moonshot-saros-grid-ssm`).
