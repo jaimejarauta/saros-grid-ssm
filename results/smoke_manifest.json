@@ -1,20 +1,41 @@
 {
-  "timestamp": "2026-10-26 15:24:30 UTC",
-  "git_commit": "unknown",
-  "device": "mps",
-  "device_name": "mps",
-  "parameters": 65283,
+  "timestamp": "2026-10-26 21:37:30 UTC",
+  "git_commit": "4bf4ed1dab1878b05941a4ac4b132810319a4568",
+  "device": "cpu",
+  "device_name": "cpu",
+  "parameters": 48739,
   "train_steps": 300,
-  "train_duration_sec": 64.29303812980652,
+  "train_duration_sec": 51.07638502120972,
   "metrics": {
-    "wmape": 0.01830195263028145,
-    "mae": 8.6899995803833,
-    "rmse": 13.084878921508789,
-    "curtailment_f1": 0.9183055975794251,
-    "curtailment_precision": 0.848951048951049,
-    "curtailment_recall": 1.0,
-    "curtailment_accuracy": 0.9935714285714285
+    "wmape": 0.03936784341931343,
+    "mae": 18.28021240234375,
+    "rmse": 37.458011627197266,
+    "curtailment_f1": 0.9356417011667293,
+    "curtailment_precision": 0.8803116147308782,
+    "curtailment_recall": 0.9983935742971888,
+    "curtailment_accuracy": 0.988125
   },
+  "baselines": {
+    "copy": {
+      "wmape": 0.1858910769224167,
+      "mae": 86.3173599243164,
+      "rmse": 153.57498168945312,
+      "curtailment_f1": 0.5571187394485086,
+      "curtailment_precision": 0.9304511278195489,
+      "curtailment_recall": 0.39759036144578314,
+      "curtailment_accuracy": 0.9453472222222222
+    },
+    "yesterday": {
+      "wmape": 0.16334159672260284,
+      "mae": 75.84664916992188,
+      "rmse": 132.49282836914062,
+      "curtailment_f1": 0.8088587390263368,
+      "curtailment_precision": 0.8037272006344172,
+      "curtailment_recall": 0.8140562248995984,
+      "curtailment_accuracy": 0.9667361111111111
+    }
+  },
+  "horizon": 4,
   "gate_passed": true,
   "config": {
     "question": "Can spatio-temporal selective state space models predict 15-minute nodal renewable injection and curtailment with wMAPE < 6.5%?",
@@ -24,14 +45,15 @@
       "timesteps": 96,
       "in_features": 4,
       "out_features": 2,
-      "curtailment_out": 1
+      "curtailment_out": 1,
+      "horizon": 4
     },
     "model": {
       "d_model": 64,
       "d_state": 16,
       "num_spatial_hops": 2,
       "num_layers": 2,
-      "bidirectional": true,
+      "bidirectional": false,
       "dropout": 0.05
     },
     "training": {
@@ -48,7 +70,7 @@
       "gate_threshold": 0.065,
       "curtailment_f1_threshold": 0.75,
       "kill_rule": "wmape >= 0.085 or f1 < 0.50",
-      "pass_rule": "wmape < 0.065 and f1 >= 0.75",
+      "pass_rule": "wmape < 0.065 and f1 >= 0.75 and beats best of copy/yesterday baselines on both (2026-10-26)",
       "max_runtime_sec": 180
     }
   }

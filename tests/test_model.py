@@ -100,3 +100,16 @@ if __name__ == "__main__":
     test_full_grid_ssm_forward_and_backward()
     test_bibo_stability_eigenvalues()
     print("All test_model.py tests passed successfully.")
+
+
+def test_unidirectional_model_is_causal_in_time():
+    from saros_grid_ssm.ree_data import build_spanish_grid_adjacency, normalize_adjacency
+    torch.manual_seed(0)
+    adj = torch.from_numpy(normalize_adjacency(build_spanish_grid_adjacency(10))).float()
+    model = GridSpatioTemporalSSM(d_model=32, d_state=8, num_layers=2, bidirectional=False).eval()
+    x = torch.randn(2, 24, 10, 4)
+    x2 = x.clone()
+    x2[:, 12:] = torch.randn(2, 12, 10, 4)
+    y1 = model(x, adj)["injection_mw"]
+    y2 = model(x2, adj)["injection_mw"]
+    assert torch.allclose(y1[:, :12], y2[:, :12], atol=1e-5)

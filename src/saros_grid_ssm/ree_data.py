@@ -89,10 +89,16 @@ def normalize_adjacency(adj: np.ndarray) -> np.ndarray:
 def generate_synthetic_ree_grid(
     num_days: int = 14,
     num_nodes: int = 50,
-    seed: int = 2026
+    seed: int = 2026,
+    coupling: float = 0.5
 ) -> Dict[str, np.ndarray]:
-    """Generates synthetic 15-minute dispatch profiles for 50 Spanish REE transmission nodes."""
+    """Generates synthetic 15-minute dispatch profiles for 50 Spanish REE transmission nodes.
+    coupling: weight of neighbours' mean net balance (dem - ren); deficits absorb exports, surpluses congest
+    shared corridors. 0 = isolated nodes.
+    """
     rng = np.random.RandomState(seed)
+    adj = build_spanish_grid_adjacency(num_nodes)
+    w_nbr = adj / np.maximum(adj.sum(1, keepdims=True), 1.0)  # row-normalized, no self loops
     timesteps_per_day = 96
     total_timesteps = num_days * timesteps_per_day
 
@@ -213,7 +219,8 @@ def generate_synthetic_ree_grid(
         # Physical Grid Bottleneck & Curtailment calculation
         # Net nodal generation excess
         total_ren = sol_pot + wnd_pot
-        net_excess = total_ren - dem - export_limit
+        nbr_headroom = coupling * (w_nbr @ (dem - total_ren))  # signed: >0 absorbs exports, <0 congests
+        net_excess = total_ren - dem - export_limit - nbr_headroom
 
         is_curtailed = net_excess > 0.0
         curtailments[t, :, 0] = is_curtailed.astype(np.float32)
@@ -225,7 +232,6 @@ def generate_synthetic_ree_grid(
         injections[t, :, 0] = np.maximum(0.0, curtailed_solar)
         injections[t, :, 1] = np.maximum(0.0, curtailed_wind)
 
-    adj = build_spanish_grid_adjacency(num_nodes)
     adj_norm = normalize_adjacency(adj)
 
     return {
@@ -245,17 +251,19 @@ class REESpanishGridDataset(Dataset):
         injections: np.ndarray,
         curtailments: np.ndarray,
         window_size: int = 96,
-        stride: int = 96
+        stride: int = 96,
+        horizon: int = 0
     ):
         self.inputs = torch.from_numpy(inputs).float()
         self.injections = torch.from_numpy(injections).float()
         self.curtailments = torch.from_numpy(curtailments).float()
         self.window_size = window_size
         self.stride = stride
+        self.horizon = horizon  # targets at t + horizon for inputs at t; 0 = same-step nowcast
 
         # Number of non-overlapping or strided daily windows
         self.total_timesteps = inputs.shape[0]
-        self.indices = list(range(0, self.total_timesteps - window_size + 1, stride))
+        self.indices = list(range(0, self.total_timesteps - window_size - horizon + 1, stride))
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -263,7 +271,8 @@ class REESpanishGridDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         start = self.indices[idx]
         end = start + self.window_size
-        x_window = self.inputs[start:end]              # (96, num_nodes, 4)
-        y_inj_window = self.injections[start:end]      # (96, num_nodes, 2)
-        y_curt_window = self.curtailments[start:end]   # (96, num_nodes, 1)
+        h = self.horizon
+        x_window = self.inputs[start:end]                      # (96, num_nodes, 4)
+        y_inj_window = self.injections[start + h:end + h]      # (96, num_nodes, 2)
+        y_curt_window = self.curtailments[start + h:end + h]   # (96, num_nodes, 1)
         return x_window, y_inj_window, y_curt_window

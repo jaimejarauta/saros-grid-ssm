@@ -110,3 +110,40 @@ if __name__ == "__main__":
     test_dataset_loader_windowing()
     test_metrics_computations()
     print("All test_ree_data.py tests passed successfully.")
+
+
+def test_dataset_horizon_shifts_targets():
+    data = generate_synthetic_ree_grid(num_days=4, num_nodes=50, seed=42)
+    ds = REESpanishGridDataset(data["inputs"], data["injections"], data["curtailments"],
+                               window_size=96, stride=96, horizon=4)
+    assert len(ds) == 3  # last window would need targets past the end
+    x, y_inj, y_curt = ds[1]
+    assert np.allclose(x.numpy(), data["inputs"][96:192])
+    assert np.allclose(y_inj.numpy(), data["injections"][100:196])
+    assert np.allclose(y_curt.numpy(), data["curtailments"][100:196])
+
+
+def test_baseline_forecasts_alignment():
+    from saros_grid_ssm.metrics import baseline_forecasts
+    T, N = 300, 3
+    inputs = np.arange(T * N * 4, dtype=np.float32).reshape(T, N, 4)
+    inj = np.arange(T * N * 2, dtype=np.float32).reshape(T, N, 2)
+    curt = (np.arange(T * N) % 2).astype(np.float32).reshape(T, N, 1)
+    b = baseline_forecasts(inputs, inj, curt, starts=[100, 196], window=96, horizon=4)
+    # copy: potentials at the input step t predict the target at t + 4
+    assert np.allclose(b["copy"][0][1], inputs[196:292, :, :2])
+    # yesterday: target at t + 4 predicted by the observed value at t + 4 - 96
+    assert np.allclose(b["yesterday"][0][0], inj[8:104])
+    assert np.allclose(b["yesterday"][1][1], curt[104:200])
+    assert b["copy"][0].shape == (2, 96, N, 2)
+
+
+def test_curtailment_couples_to_neighbours():
+    from saros_grid_ssm.metrics import compute_curtailment_f1
+    def local_rule_f1(coupling):
+        d = generate_synthetic_ree_grid(num_days=3, num_nodes=50, seed=7, coupling=coupling)
+        x = d["inputs"]
+        rule = ((x[..., 0] + x[..., 1] - x[..., 2] - x[..., 3]) > 0).astype(np.float32)
+        return compute_curtailment_f1(d["curtailments"][..., 0], rule)["f1"]
+    assert local_rule_f1(0.0) == 1.0  # isolated nodes: pointwise rule is exact
+    assert local_rule_f1(0.5) < 0.9   # neighbour balance changes the label

@@ -8,13 +8,14 @@ grid:
   in_features: 4          # solar_mw, wind_mw, demand_mw, net_export_capacity
   out_features: 2         # predicted solar_mw, wind_mw
   curtailment_out: 1      # binary bottleneck indicator
+  horizon: 4              # forecast t+4 (1 h) from inputs <= t; 0 = same-step nowcast
 
 model:
   d_model: 64
   d_state: 16             # SSM latent state dimension
   num_spatial_hops: 2     # K-hop graph diffusion
   num_layers: 2
-  bidirectional: true
+  bidirectional: false    # causal in time; true would read future inputs
   dropout: 0.05
 
 training:
@@ -31,5 +32,5 @@ pre_registered_rules:
   gate_threshold: 0.065   # Target: wMAPE < 6.5%
   curtailment_f1_threshold: 0.75
   kill_rule: "wmape >= 0.085 or f1 < 0.50"
-  pass_rule: "wmape < 0.065 and f1 >= 0.75"
+  pass_rule: "wmape < 0.065 and f1 >= 0.75 and beats best of copy/yesterday baselines on both (2026-10-26)"
   max_runtime_sec: 180

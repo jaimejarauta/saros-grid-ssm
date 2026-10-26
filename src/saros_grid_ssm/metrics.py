@@ -100,3 +100,17 @@ def compute_grid_metrics(
         "curtailment_recall": curtail_metrics["recall"],
         "curtailment_accuracy": curtail_metrics["accuracy"],
     }
+
+
+def baseline_forecasts(inputs, injections, curtailments, starts, window: int, horizon: int):
+    """Forecasts for targets at t+horizon, t in each window. Returns {name: (injection (W,T,N,2), curtailment (W,T,N,1))}.
+    copy: potentials and the curtailment rule at t. yesterday: observed value at t + horizon - 96 (same slot, one day back).
+    """
+    import numpy as np
+    sl = lambda arr, off: np.stack([arr[s + off:s + off + window] for s in starts])
+    x = sl(inputs, 0)
+    rule = (x[..., 0] + x[..., 1] - x[..., 2] - x[..., 3] > 0).astype(np.float32)[..., None]
+    return {
+        "copy": (x[..., :2], rule),
+        "yesterday": (sl(injections, horizon - 96), sl(curtailments, horizon - 96)),
+    }

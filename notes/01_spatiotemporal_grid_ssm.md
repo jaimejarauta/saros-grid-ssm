@@ -66,3 +66,22 @@ For day-ahead dispatch planning where the entire 96-timestep diurnal schedule is
 2. **Sub-Quadratic Complexity:** Total computational cost scales as $O(B \cdot T \cdot (K |E| + N D_{\text{state}}))$, strictly linear in time horizon $T$ and transmission nodes $N$.
 3. **Target wMAPE:** Day-ahead renewable injection error across 50 nodes satisfies $\text{wMAPE} < 6.5\%$.
 4. **Curtailment Detection:** Classification performance on transmission bottleneck curtailment events achieves $F_1 \ge 0.75$.
+
+## Run log 2026-10-26: forecasting setup
+
+Before: same-step targets, bidirectional SSM, isolated nodes. Copying the inputs scored 0.98% wMAPE vs the model's
+1.83%, and the pointwise rule labelled curtailment exactly, so neither the graph nor the SSM could matter.
+
+Changes: targets at t+4 (1 h) from inputs <= t (`grid.horizon`), unidirectional SSM, signed neighbour coupling in
+the generator (`coupling=0.5`: neighbours' net balance absorbs or congests exports), baselines in the gate
+(copy: potentials and local rule at t; yesterday: observed value at t+H-96).
+
+| Arm (seed 2026, 300 steps, CPU) | wMAPE | Curtailment F1 |
+|---|---|---|
+| Copy baseline | 18.59% | 0.557 |
+| Yesterday baseline | 16.33% | 0.809 |
+| SSM, 0 graph hops | 4.48% | 0.879 |
+| SSM, 2 graph hops | 3.94% | 0.936 |
+
+Rule: pass if wMAPE < 6.5%, F1 >= 0.75, and both beat the best baseline. Status: pass, one seed (exploratory).
+Caveat: data is still synthetic; the next step is real ESIOS data with the same horizon and baselines.

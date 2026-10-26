@@ -20,7 +20,7 @@ if os.path.join(REPO_ROOT, "src") not in sys.path:
 
 from saros_grid_ssm.model import GridSpatioTemporalSSM
 from saros_grid_ssm.ree_data import generate_synthetic_ree_grid, REESpanishGridDataset
-from saros_grid_ssm.metrics import compute_wmape, compute_curtailment_f1, compute_grid_metrics
+from saros_grid_ssm.metrics import compute_wmape, compute_curtailment_f1, compute_grid_metrics, baseline_forecasts
 
 def get_git_hash() -> str:
     try:
@@ -94,21 +94,24 @@ def main():
     raw_data = generate_synthetic_ree_grid(num_days=21, num_nodes=num_nodes, seed=seed)
     adj_norm = torch.from_numpy(raw_data["adjacency_norm"]).float().to(device)
 
-    # Split train and validation (14 days train, 7 days val)
+    # Split train and validation (14 days train, 7 days val); targets at t + horizon
     train_split = 14 * 96
+    horizon = int(cfg["grid"].get("horizon", 0))
     train_dataset = REESpanishGridDataset(
         inputs=raw_data["inputs"][:train_split],
         injections=raw_data["injections"][:train_split],
         curtailments=raw_data["curtailments"][:train_split],
         window_size=96,
-        stride=48
+        stride=48,
+        horizon=horizon
     )
     val_dataset = REESpanishGridDataset(
         inputs=raw_data["inputs"][train_split:],
         injections=raw_data["injections"][train_split:],
         curtailments=raw_data["curtailments"][train_split:],
         window_size=96,
-        stride=96
+        stride=96,
+        horizon=horizon
     )
 
     batch_size = cfg["training"].get("batch_size", 16)
@@ -222,6 +225,18 @@ def main():
                 curtailment_pred_prob=preds_val["curtailment_prob"]
             )
 
+    # Baselines on the same validation windows and targets
+    starts = [train_split + i for i in val_dataset.indices]
+    baselines = {}
+    for name, (b_inj, b_curt) in baseline_forecasts(raw_data["inputs"], raw_data["injections"], raw_data["curtailments"],
+                                                    starts, window=96, horizon=horizon).items():
+        baselines[name] = compute_grid_metrics(
+            injection_true=y_inj_val.cpu(), injection_pred=torch.from_numpy(b_inj),
+            curtailment_true=y_curt_val.cpu(), curtailment_pred_prob=torch.from_numpy(b_curt),
+        )
+    best_base_wmape = min(b["wmape"] for b in baselines.values())
+    best_base_f1 = max(b["curtailment_f1"] for b in baselines.values())
+
     wmape_pct = metrics["wmape"] * 100.0
     gate_threshold_pct = cfg["pre_registered_rules"]["gate_threshold"] * 100.0
     curtail_f1 = metrics["curtailment_f1"]
@@ -229,6 +244,8 @@ def main():
     gate_passed = (
         metrics["wmape"] < cfg["pre_registered_rules"]["gate_threshold"]
         and curtail_f1 >= f1_threshold
+        and metrics["wmape"] < best_base_wmape
+        and curtail_f1 > best_base_f1
     )
 
     print("\n" + "=" * 70)
@@ -238,7 +255,10 @@ def main():
     print(f"  Root Mean Square Error (RMSE)       : {metrics['rmse']:.2f} MW")
     print(f"  Curtailment Bottleneck F1 Score     : {curtail_f1:.4f}  (Target: >= {cfg['pre_registered_rules']['curtailment_f1_threshold']:.2f})")
     print(f"  Curtailment Precision / Recall      : {metrics['curtailment_precision']:.4f} / {metrics['curtailment_recall']:.4f}")
-    print(f"  Gate 1 Status                       : {'PASSED' if gate_passed else 'FAILED'}")
+    for name, b in baselines.items():
+        print(f"  Baseline [{name:<9}] wMAPE / F1     : {b['wmape'] * 100:.2f}% / {b['curtailment_f1']:.4f}")
+    print(f"  Horizon                             : {horizon} steps ({horizon * 15} min)")
+    print(f"  Gate 1 Status (beat best baseline)  : {'PASSED' if gate_passed else 'FAILED'}")
     print("=" * 70)
 
     if use_wandb and wandb_run:
@@ -263,6 +283,8 @@ def main():
         "train_steps": max_steps,
         "train_duration_sec": train_duration,
         "metrics": metrics,
+        "baselines": baselines,
+        "horizon": horizon,
         "gate_passed": gate_passed,
         "config": cfg
     }
