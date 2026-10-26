@@ -136,17 +136,23 @@ def main():
 
     # 4. Training Loop
     print("\n[3/4] Running smoke training loop...")
+    s_base = float(cfg["training"].get("s_base_mw", 1000.0))
+    curt_loss_weight = float(cfg["training"].get("curt_loss_weight", 0.10))
+    lr = float(cfg["training"].get("lr", 0.005))
+    max_steps = args.steps if args.steps is not None else cfg["training"].get("steps", 300)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=cfg["training"]["lr"],
+        lr=lr,
         weight_decay=cfg["training"]["weight_decay"]
     )
-    huber_loss_fn = nn.SmoothL1Loss(beta=10.0)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_steps)
+    huber_loss_fn = nn.SmoothL1Loss(beta=0.01)
+
     p_curt = float(raw_data["curtailments"][:train_split].mean())
     pos_weight = torch.tensor([(1.0 - p_curt) / max(p_curt, 1e-6)], device=device)
     bce_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    max_steps = args.steps if args.steps is not None else cfg["training"].get("steps", 50)
     step = 0
     t0 = time.time()
     model.train()
@@ -157,21 +163,27 @@ def main():
             y_inj_b = y_inj_b.to(device)
             y_curt_b = y_curt_b.to(device)
 
-            optimizer.zero_grad()
-            preds = model(x_b, adj_norm)
+            # Per-unit (p.u.) scaling for stable transmission dynamics
+            x_b_pu = x_b / s_base
+            y_inj_pu = y_inj_b / s_base
 
-            # Joint loss: Renewable injection MW + Curtailment bottleneck risk
-            loss_inj = huber_loss_fn(preds["injection_mw"], y_inj_b)
+            optimizer.zero_grad()
+            preds = model(x_b_pu, adj_norm)
+
+            # Joint loss: Per-unit injection loss + Curtailment bottleneck risk
+            loss_inj = huber_loss_fn(preds["injection_mw"], y_inj_pu)
             loss_curt = bce_loss_fn(preds["curtailment_logits"], y_curt_b)
-            total_loss = loss_inj + 5.0 * loss_curt
+            total_loss = loss_inj + curt_loss_weight * loss_curt
 
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            scheduler.step()
 
             step += 1
             if step % 10 == 0 or step == max_steps:
-                wmape_batch = compute_wmape(y_inj_b, preds["injection_mw"])
+                pred_mw_batch = preds["injection_mw"] * s_base
+                wmape_batch = compute_wmape(y_inj_b, pred_mw_batch)
                 print(f"Step [{step:03d}/{max_steps:03d}] | Total Loss: {total_loss.item():.4f} | "
                       f"Inj Loss: {loss_inj.item():.4f} | Curt Loss: {loss_curt.item():.4f} | "
                       f"Batch wMAPE: {wmape_batch * 100:.2f}%")
@@ -199,11 +211,13 @@ def main():
             y_inj_val = y_inj_val.to(device)
             y_curt_val = y_curt_val.to(device)
 
-            preds_val = model(x_val, adj_norm)
+            x_val_pu = x_val / s_base
+            preds_val = model(x_val_pu, adj_norm)
+            pred_mw_val = preds_val["injection_mw"] * s_base
 
             metrics = compute_grid_metrics(
                 injection_true=y_inj_val,
-                injection_pred=preds_val["injection_mw"],
+                injection_pred=pred_mw_val,
                 curtailment_true=y_curt_val,
                 curtailment_pred_prob=preds_val["curtailment_prob"]
             )

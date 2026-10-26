@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-10-26 06:59:34 UTC",
-  "git_commit": "a01766b6c20023f9b4183abc58333af6c4abc24e",
+  "timestamp": "2026-10-26 15:24:30 UTC",
+  "git_commit": "unknown",
   "device": "mps",
   "device_name": "mps",
-  "parameters": 61123,
-  "train_steps": 1000,
-  "train_duration_sec": 193.17850399017334,
+  "parameters": 65283,
+  "train_steps": 300,
+  "train_duration_sec": 64.29303812980652,
   "metrics": {
-    "wmape": 0.015859607607126236,
-    "mae": 7.530343055725098,
-    "rmse": 13.34728717803955,
-    "curtailment_f1": 0.9946347503095336,
-    "curtailment_precision": 0.9966914805624483,
-    "curtailment_recall": 0.9925864909390445,
-    "curtailment_accuracy": 0.9996130952380953
+    "wmape": 0.01830195263028145,
+    "mae": 8.6899995803833,
+    "rmse": 13.084878921508789,
+    "curtailment_f1": 0.9183055975794251,
+    "curtailment_precision": 0.848951048951049,
+    "curtailment_recall": 1.0,
+    "curtailment_accuracy": 0.9935714285714285
   },
   "gate_passed": true,
   "config": {
@@ -35,10 +35,12 @@
       "dropout": 0.05
     },
     "training": {
-      "lr": 0.001,
+      "lr": 0.005,
       "weight_decay": 0.0001,
-      "steps": 100,
+      "steps": 300,
       "batch_size": 16,
+      "s_base_mw": 1000.0,
+      "curt_loss_weight": 0.1,
       "seed": 2026
     },
     "pre_registered_rules": {

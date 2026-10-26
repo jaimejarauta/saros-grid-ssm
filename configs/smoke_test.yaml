@@ -18,10 +18,12 @@ model:
   dropout: 0.05
 
 training:
-  lr: 0.001
+  lr: 0.005
   weight_decay: 0.0001
-  steps: 100
+  steps: 300
   batch_size: 16
+  s_base_mw: 1000.0
+  curt_loss_weight: 0.10
   seed: 2026
 
 pre_registered_rules:
