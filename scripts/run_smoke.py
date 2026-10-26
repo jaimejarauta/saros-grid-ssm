@@ -142,7 +142,9 @@ def main():
         weight_decay=cfg["training"]["weight_decay"]
     )
     huber_loss_fn = nn.SmoothL1Loss(beta=10.0)
-    bce_loss_fn = nn.BCELoss()
+    p_curt = float(raw_data["curtailments"][:train_split].mean())
+    pos_weight = torch.tensor([(1.0 - p_curt) / max(p_curt, 1e-6)], device=device)
+    bce_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     max_steps = args.steps if args.steps is not None else cfg["training"].get("steps", 50)
     step = 0
@@ -160,7 +162,7 @@ def main():
 
             # Joint loss: Renewable injection MW + Curtailment bottleneck risk
             loss_inj = huber_loss_fn(preds["injection_mw"], y_inj_b)
-            loss_curt = bce_loss_fn(preds["curtailment_prob"], y_curt_b)
+            loss_curt = bce_loss_fn(preds["curtailment_logits"], y_curt_b)
             total_loss = loss_inj + 5.0 * loss_curt
 
             total_loss.backward()

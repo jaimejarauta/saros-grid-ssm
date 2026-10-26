@@ -101,15 +101,17 @@ class SelectiveSSMBlock(nn.Module):
         if bidirectional:
             self.log_alpha_bwd = nn.Parameter(torch.linspace(0.1, 2.0, d_state).unsqueeze(0))
 
-        # Input-dependent selective projections (Delta, B, C)
+        # Input-dependent selective projections (Delta, B, C, U)
         self.proj_delta_fwd = nn.Linear(d_model, d_state)
         self.proj_b_fwd = nn.Linear(d_model, d_state)
         self.proj_c_fwd = nn.Linear(d_model, d_state)
+        self.proj_u_fwd = nn.Linear(d_model, d_state)
 
         if bidirectional:
             self.proj_delta_bwd = nn.Linear(d_model, d_state)
             self.proj_b_bwd = nn.Linear(d_model, d_state)
             self.proj_c_bwd = nn.Linear(d_model, d_state)
+            self.proj_u_bwd = nn.Linear(d_model, d_state)
 
         # Feedthrough skip connection D
         self.d_skip = nn.Parameter(torch.ones(d_model))
@@ -127,6 +129,7 @@ class SelectiveSSMBlock(nn.Module):
         proj_delta: nn.Linear,
         proj_b: nn.Linear,
         proj_c: nn.Linear,
+        proj_u: nn.Linear,
         reverse: bool = False
     ) -> torch.Tensor:
         """Performs selective continuous-time SSM scan along sequence length dimension in parallel.
@@ -147,7 +150,7 @@ class SelectiveSSMBlock(nn.Module):
         # Discretize: A_bar = exp(delta * A_c), B_bar = delta * B_t
         a_bar = torch.exp(delta * a_cont.unsqueeze(0))  # (B, T, d_state)
         b_bar = delta * b_t                            # (B, T, d_state)
-        u = b_bar * x.mean(dim=-1, keepdim=True)       # (B, T, d_state)
+        u = b_bar * proj_u(x)                          # (B, T, d_state): per-channel drive, not a 1-scalar mean
 
         if reverse:
             a_bar = torch.flip(a_bar, dims=[1])
@@ -184,13 +187,13 @@ class SelectiveSSMBlock(nn.Module):
 
         # Forward selective scan
         y_fwd = self._selective_scan(
-            x_flat, self.log_alpha_fwd, self.proj_delta_fwd, self.proj_b_fwd, self.proj_c_fwd, reverse=False
+            x_flat, self.log_alpha_fwd, self.proj_delta_fwd, self.proj_b_fwd, self.proj_c_fwd, self.proj_u_fwd, reverse=False
         )
 
         if self.bidirectional:
             # Backward selective scan
             y_bwd = self._selective_scan(
-                x_flat, self.log_alpha_bwd, self.proj_delta_bwd, self.proj_b_bwd, self.proj_c_bwd, reverse=True
+                x_flat, self.log_alpha_bwd, self.proj_delta_bwd, self.proj_b_bwd, self.proj_c_bwd, self.proj_u_bwd, reverse=True
             )
             y_combined = torch.cat([y_fwd, y_bwd], dim=-1)
         else:
@@ -219,22 +222,26 @@ class GridForecastingHead(nn.Module):
         self.curtailment_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.GELU(),
-            nn.Linear(d_model // 2, 1),
-            nn.Sigmoid()  # Probability in [0, 1]
+            nn.Linear(d_model // 2, 1)  # Linear logits; use BCEWithLogitsLoss with pos_weight
         )
 
-    def forward(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, h: torch.Tensor, return_logits: bool = False):
         """Maps hidden representations to dispatch outputs.
         
         Args:
             h: Hidden state of shape (B, T, N, D_model)
+            return_logits: Whether to also return raw curtailment logits
         Returns:
             injection_mw: (B, T, N, 2)
             curtailment_prob: (B, T, N, 1)
+            (optional) curtailment_logits: (B, T, N, 1)
         """
         injection = self.injection_head(h)
-        curtailment = self.curtailment_head(h)
-        return injection, curtailment
+        curtailment_logits = self.curtailment_head(h)
+        curtailment_prob = torch.sigmoid(curtailment_logits)
+        if return_logits:
+            return injection, curtailment_prob, curtailment_logits
+        return injection, curtailment_prob
 
 class GridSpatioTemporalSSM(nn.Module):
     """Spatio-Temporal Selective State Space Model for Transmission Grid Dispatch."""
@@ -287,9 +294,10 @@ class GridSpatioTemporalSSM(nn.Module):
             # 2. Selective temporal state space recurrence with residual
             h = h + t_layer(h)
 
-        inj_pred, curt_pred = self.head(h)
+        inj_pred, curt_prob, curt_logits = self.head(h, return_logits=True)
 
         return {
             "injection_mw": inj_pred,
-            "curtailment_prob": curt_pred
+            "curtailment_prob": curt_prob,
+            "curtailment_logits": curt_logits
         }
