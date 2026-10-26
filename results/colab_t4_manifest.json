@@ -1,0 +1,16 @@
+{
+  "project": "saros-grid-ssm",
+  "run_type": "colab_t4_scaled",
+  "hardware": "Google Colab NVIDIA T4 GPU",
+  "date": "2026-10-26T13:14:00Z",
+  "steps": 1000,
+  "nodes": 50,
+  "elapsed_seconds": 65.39,
+  "day_ahead_injection_wmape_pct": 1.62,
+  "target_wmape_pct": 6.5,
+  "curtailment_f1_score": 0.9934,
+  "target_f1_score": 0.75,
+  "gate_name": "Pre-Registered Gate (wMAPE < 6.50% and F1 >= 0.750)",
+  "gate_status": "PASS",
+  "credits_consumed": 0.035
+}
