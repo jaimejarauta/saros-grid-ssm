@@ -87,7 +87,7 @@ class SelectiveSSMBlock(nn.Module):
         self,
         d_model: int,
         d_state: int = 16,
-        bidirectional: bool = True,
+        bidirectional: bool = False,
         dropout: float = 0.05
     ):
         super().__init__()
@@ -246,7 +246,7 @@ class GridSpatioTemporalSSM(nn.Module):
         d_state: int = 16,
         num_spatial_hops: int = 2,
         num_layers: int = 2,
-        bidirectional: bool = True,
+        bidirectional: bool = False,
         dropout: float = 0.05
     ):
         super().__init__()

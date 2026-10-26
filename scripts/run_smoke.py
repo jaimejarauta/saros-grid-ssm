@@ -209,7 +209,11 @@ def main():
     wmape_pct = metrics["wmape"] * 100.0
     gate_threshold_pct = cfg["pre_registered_rules"]["gate_threshold"] * 100.0
     curtail_f1 = metrics["curtailment_f1"]
-    gate_passed = metrics["wmape"] < cfg["pre_registered_rules"]["gate_threshold"]
+    f1_threshold = cfg["pre_registered_rules"].get("curtailment_f1_threshold", 0.75)
+    gate_passed = (
+        metrics["wmape"] < cfg["pre_registered_rules"]["gate_threshold"]
+        and curtail_f1 >= f1_threshold
+    )
 
     print("\n" + "=" * 70)
     print("PRE-REGISTERED GATE 1 ASSESSMENT:")
