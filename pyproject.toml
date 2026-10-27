@@ -19,6 +19,11 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
 ]
+sdwpf = [
+    "pandas>=2.0",
+    "lightgbm>=4.0",
+    "huggingface_hub>=0.20",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

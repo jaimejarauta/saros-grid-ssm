@@ -2,8 +2,10 @@
 """SDWPF study (Colab run 2): spatio-temporal SSM vs persistence, seasonal-naive, LightGBM and GRU on real wind power.
 Horizons 1 h / 6 h / 24 h from a 24 h input window; split by day (train 1-196, val 197-220, test 221-245).
 Each arm/seed writes its own result file, so a disconnect only repeats the arm in progress.
-Gate (2026-10-26): SSM-2hop beats LightGBM and GRU on the KDD score at >= 2 of 3 horizons (mean over seeds,
-paired bootstrap CI over test windows excludes 0) and beats SSM-0hop; otherwise the graph claim is dropped.
+Gate (2026-10-27, replaces 2026-10-26 before any SDWPF run): SSM-2hop beats every rival (persistence, seasonal,
+climatology, LightGBM with farm-level features, GRU) on the KDD score at >= 2 of 3 horizons (mean over seeds), the
+paired bootstrap CI of its MAE gain over each rival excludes 0 with test days as the resampling unit, and it beats
+SSM-0hop the same way; otherwise the graph claim is dropped.
 Graph WaveNet from the plan is not implemented; GRU is the learned no-graph baseline.
 """
 
@@ -23,7 +25,7 @@ from saros_grid_ssm.model import GridSpatioTemporalSSM
 from saros_grid_ssm.ree_data import normalize_adjacency
 from saros_grid_ssm.runtime import Run, file_digest
 from saros_grid_ssm.sdwpf import (STEPS_PER_DAY, ForecastWindows, build_tensors, download, knn_adjacency,
-                                  masked_scores, paired_bootstrap)
+                                  climatology, day_means, masked_scores, paired_bootstrap, split_starts)
 
 PATV = 9  # index of scaled Patv in the feature vector
 
@@ -97,7 +99,7 @@ def train_neural(model, train_ds, val_ds, adj, a, device, run, tag):
 
 
 def lightgbm_preds(x, y, valid, train_starts, test_ds, horizons, W):
-    """One LightGBM per horizon on per-turbine lag features (no graph); None if lightgbm is missing."""
+    """One LightGBM per horizon on per-turbine and farm-mean lag features (no graph); None if lightgbm is missing."""
     try:
         import lightgbm as lgb
     except ImportError:
@@ -105,9 +107,12 @@ def lightgbm_preds(x, y, valid, train_starts, test_ds, horizons, W):
         return None
     lags = [0, 1, 2, 3, 6, 12, 36, 72, 143]
 
-    def feats(t_end):  # (N, F) features at input end step t_end
+    N = x.size(1)
+
+    def feats(t_end):  # (N, F) features at input end step t_end; farm means give it spatial context without a graph
         cols = [x[t_end - l, :, PATV] for l in lags] + [x[t_end - l, :, 0] for l in (0, 1, 6, 36)] + \
-               [x[t_end, :, -2], x[t_end, :, -1], x[t_end - 35:t_end + 1, :, PATV].mean(0)]
+               [x[t_end, :, -2], x[t_end, :, -1], x[t_end - 35:t_end + 1, :, PATV].mean(0)] + \
+               [x[t_end - l, :, PATV].mean().expand(N) for l in (0, 6, 36)] + [x[t_end, :, 0].mean().expand(N)]
         return torch.stack(cols, -1).numpy()
 
     rng = np.random.RandomState(0)
@@ -135,7 +140,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-dir", default="data")
     p.add_argument("--out-dir", required=True)
-    p.add_argument("--arms", nargs="+", default=["persistence", "seasonal", "lightgbm", "gru", "ssm0", "ssm2"])
+    p.add_argument("--arms", nargs="+", default=["persistence", "seasonal", "climatology", "lightgbm", "gru", "ssm0", "ssm2"])
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     p.add_argument("--window", type=int, default=144)
     p.add_argument("--horizons", type=int, nargs="+", default=[6, 36, 144])
@@ -166,10 +171,7 @@ def main():
     xn = torch.where(keep, x, (x - mean) / std)
 
     W, H = a.window, a.horizons
-    span = W + max(H)
-    tr_starts = range(0, d_tr * STEPS_PER_DAY - span, a.train_stride)
-    va_starts = range(d_tr * STEPS_PER_DAY - W, d_va * STEPS_PER_DAY - span + W, 36)
-    te_starts = range(d_va * STEPS_PER_DAY - W, x.size(0) - span, 36)  # inputs may reach back into val
+    tr_starts, va_starts, te_starts = split_starts(x.size(0), W, H, d_tr, d_va, a.train_stride)
     train_ds = ForecastWindows(xn, y, valid, W, H, tr_starts)
     val_ds = ForecastWindows(xn, y, valid, W, H, va_starts)
     test_ds = ForecastWindows(xn, y, valid, W, H, te_starts)
@@ -189,6 +191,10 @@ def main():
                     pr = torch.stack([y[s + W - 1].repeat(len(H), 1).T for s in test_ds.starts])
                 elif arm == "seasonal":
                     pr = torch.stack([torch.stack([y[s + W - 1 + h - STEPS_PER_DAY] for h in H], -1) for s in test_ds.starts])
+                elif arm == "climatology":
+                    clim = climatology(y, valid, d_tr * STEPS_PER_DAY)
+                    pr = torch.stack([torch.stack([clim[(s + W - 1 + h) % STEPS_PER_DAY] for h in H], -1)
+                                      for s in test_ds.starts])
                 elif arm == "lightgbm":
                     pr = lightgbm_preds(x, y, valid, tr_starts, test_ds, H, W)
                     if pr is None:
@@ -211,13 +217,13 @@ def main():
     summary = {arm: mean_over_seeds(arm) for arm in a.arms if mean_over_seeds(arm)}
     gate = None
     if all(k in summary for k in ("ssm2", "ssm0", "gru")):
-        rivals = [r for r in ("lightgbm", "gru") if r in summary]
+        rivals = [r for r in ("persistence", "seasonal", "climatology", "lightgbm", "gru") if r in summary]
         wins = sum(all(summary["ssm2"][h] < summary[r][h] for r in rivals) for h in summary["ssm2"])
-        ssm2 = torch.stack([per_window_mae(preds[t], y_te, v_te) for t in preds if t.startswith("ssm2_")]).mean(0)
-        cis = {}
-        for r in rivals + ["ssm0"]:
-            other = torch.stack([per_window_mae(preds[t], y_te, v_te) for t in preds if t.startswith(r + "_")]).mean(0)
-            cis[r] = paired_bootstrap(ssm2, other)
+        origin = torch.tensor([s + W - 1 for s in test_ds.starts])
+        daily = lambda arm: day_means(torch.stack([per_window_mae(preds[t], y_te, v_te) for t in preds
+                                                   if t.startswith(arm + "_")]).mean(0), origin)
+        ssm2 = daily("ssm2")
+        cis = {r: paired_bootstrap(ssm2, daily(r)) for r in rivals + ["ssm0"]}
         graph_helps = all(summary["ssm2"][h] < summary["ssm0"][h] for h in summary["ssm2"]) and cis["ssm0"][0] > 0
         gate = {"horizon_wins_vs_all_rivals": wins, "ci_vs": cis, "graph_helps": graph_helps,
                 "passed": wins >= 2 and all(cis[r][0] > 0 for r in rivals) and graph_helps}

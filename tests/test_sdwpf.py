@@ -69,3 +69,31 @@ def test_paired_bootstrap_ci():
     noise = torch.randn(200, generator=torch.Generator().manual_seed(0))
     lo, hi = paired_bootstrap(a, a + noise, n=500, seed=0)
     assert lo < 0 < hi
+
+
+def test_split_targets_never_cross_boundaries():
+    from saros_grid_ssm.sdwpf import split_starts
+    W, H, d_tr, d_va, days = 144, (6, 36, 144), 8, 9, 10
+    tr, va, te = split_starts(days * 144, W, H, d_tr, d_va, train_stride=1, eval_stride=1)
+    tgt = lambda ss, h: [s + W - 1 + h for s in ss]
+    assert max(tgt(tr, 144)) < d_tr * 144 <= min(tgt(va, 6))
+    assert max(tgt(va, 144)) < d_va * 144 <= min(tgt(te, 6))
+    assert max(tgt(te, 144)) < days * 144
+
+
+def test_climatology_by_time_of_day():
+    from saros_grid_ssm.sdwpf import climatology
+    tod = torch.arange(3 * 144) % 144
+    y = torch.stack([tod.float(), 2 * tod.float()], -1)  # (T, 2)
+    valid = torch.ones_like(y, dtype=torch.bool)
+    y[144 + 5, 0], valid[144 + 5, 0] = 1e6, False      # invalid outlier is ignored
+    y[2 * 144:] = -1.0                                  # outside the training span
+    c = climatology(y, valid, t_end=2 * 144)
+    assert c.shape == (144, 2) and torch.allclose(c[:, 0], tod[:144].float()) and torch.allclose(c[:, 1], 2 * tod[:144].float())
+
+
+def test_day_means():
+    from saros_grid_ssm.sdwpf import day_means
+    err = torch.tensor([1.0, 3.0, 10.0, 20.0, 30.0])
+    steps = torch.tensor([0, 143, 144, 200, 287])
+    assert torch.allclose(day_means(err, steps), torch.tensor([2.0, 20.0]))

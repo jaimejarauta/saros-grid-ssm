@@ -105,3 +105,30 @@ def paired_bootstrap(err_a: torch.Tensor, err_b: torch.Tensor, n: int = 2000, se
     idx = torch.randint(0, d.numel(), (n, d.numel()), generator=g)
     means = d[idx].mean(1)
     return means.quantile(0.025).item(), means.quantile(0.975).item()
+
+
+def split_starts(T: int, window: int, horizons: Sequence[int], d_tr: int, d_va: int, train_stride: int = 6,
+                 eval_stride: int = 36) -> Tuple[range, range, range]:
+    """Window starts whose every target lies inside its split (train days < d_tr <= val days < d_va <= test).
+    Inputs may reach back into the previous split; targets never cross a boundary."""
+    span, lo = window + max(horizons), window - 1 + min(horizons)
+    tr = range(0, d_tr * STEPS_PER_DAY - span + 1, train_stride)
+    va = range(d_tr * STEPS_PER_DAY - lo, d_va * STEPS_PER_DAY - span + 1, eval_stride)
+    te = range(d_va * STEPS_PER_DAY - lo, T - span + 1, eval_stride)
+    return tr, va, te
+
+
+def climatology(y: torch.Tensor, valid: torch.Tensor, t_end: int) -> torch.Tensor:
+    """(STEPS_PER_DAY, N) mean of valid y per time of day over steps < t_end; the honest no-skill 24 h forecast."""
+    tod = torch.arange(t_end) % STEPS_PER_DAY
+    w = valid[:t_end].float()
+    num = torch.zeros(STEPS_PER_DAY, y.size(1)).index_add_(0, tod, y[:t_end] * w)
+    den = torch.zeros(STEPS_PER_DAY, y.size(1)).index_add_(0, tod, w)
+    return num / den.clamp_min(1)
+
+
+def day_means(err: torch.Tensor, steps: torch.Tensor) -> torch.Tensor:
+    """Mean of per-window errors within each calendar day of `steps`; overlapping windows are not independent,
+    so days are the bootstrap unit."""
+    _, inv = (torch.as_tensor(steps) // STEPS_PER_DAY).unique(return_inverse=True)
+    return torch.zeros(int(inv.max()) + 1).index_add_(0, inv, err.float()) / torch.bincount(inv).float()
